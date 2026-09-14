@@ -1,6 +1,7 @@
 ---
 name: jmix-migrate-theme-to-aura
-description: Switch a project that came from Jmix 2.x over to the Aura theme. Studio's 2.x→3.x migration deliberately keeps Lumo and there is no automated conversion, so every step here is manual. Each step has a SILENT failure mode — the app boots, compiles, and passes a green clean test while still rendering Lumo, or renders Aura tokens on top of Lumo components.
+description: Switch a project that came from Jmix 2.x over to the Aura theme, including porting Lumo utility classes. Studio's 2.x→3.x migration deliberately keeps Lumo and there is no automated conversion, so every step here is manual. Each step has a SILENT failure mode — the app boots, compiles, and passes a green clean test while still rendering Lumo, or renders Aura tokens on top of Lumo components.
+disable-model-invocation: true
 ---
 
 # Migrate a Jmix 2.x project's theme to Aura
@@ -29,15 +30,9 @@ compatibility shim** that keeps Lumo component styling working on Vaadin 25, and
 the utility stylesheet is Lumo's too — Step 2 removes both. Aura is offered only
 when *creating* a new project; nothing below happens automatically.
 
-**The `theme.json` rewrite is not guaranteed.** `lumoImports` is dead in
-Vaadin 25 either way — flow-server's
-`plugins/application-theme-plugin/theme-generator.js` still reads it at 24.9.x
-and no longer mentions it at 25.1.x — but Studio does not always strip it.
-Observed removed in a project whose theme sat under `src/main/frontend/themes/`
-and left untouched in two at root-level `frontend/themes/`; that the cause is the
-layout is a guess, not something confirmed against Studio. It makes no
-difference here, since Step 3 deletes the folder — just do not read a surviving
-`lumoImports` as evidence that the platform upgrade did not run.
+**Studio does not always strip `lumoImports`.** The key is dead in Vaadin 25
+either way and Step 3 deletes the folder, so a surviving `lumoImports` is not
+evidence that the platform upgrade did not run.
 
 Confirm where you actually are before changing anything:
 
@@ -54,27 +49,16 @@ Keep that folder path — Step 3 deletes it and `@Theme(value = "<app>")` names 
 
 ## Step 1 — take the scaffold from a real Aura project, do not hand-write it
 
-**First look for an Aura project already on this machine.** This needs no Studio,
-and on a developer's laptop it is usually a hit:
+**Ask the user for a reference Aura project** — the path to one they already
+have, or a throwaway Jmix 3 project created in Studio choosing **Aura**. Do not
+search the filesystem for one. Then copy its theme folder.
 
-```bash
-find ~ -maxdepth 8 -type d -path '*META-INF/resources/themes/*-aura' \
-       -not -path '*/build/*' -not -path '*/node_modules/*' 2>/dev/null
-```
+The generated Aura CSS is much richer than a translated Lumo file — app-layout
+insets and radii, surface gradients, the user-menu grid, the initial layout.
+Hand-porting the old Lumo boilerplate reproduces none of it.
 
-Treat a hit as a clean source only if its `<app>.css` is still the untouched
+Use the reference only if its `<app>.css` is still the untouched
 `/* Define your styles here */`; otherwise you inherit someone's project CSS.
-Diff two hits against each other if you have them — pristine scaffolds are
-byte-identical apart from that one file. A source project on a different patch
-version is fine (this is generated CSS, not pinned API — a 3.0.1 scaffold in a
-3.0.2 project is what the observations here are based on), but say so in your
-report.
-
-Otherwise create a throwaway Jmix 3 project in Studio choosing **Aura**, or use
-any project already created that way, and copy its theme folder. The generated
-Aura CSS is much richer than a translated Lumo file — app-layout insets and
-radii, surface gradients, the user-menu grid, the initial layout. Hand-porting
-the old Lumo boilerplate reproduces none of it.
 
 ```
 src/main/resources/META-INF/resources/themes/<app>-aura/
@@ -127,23 +111,12 @@ grep -rhoE 'classNames?="[^"]*"' src/main/resources --include='*.xml' | sort -u
 ```
 
 Lumo utility names (`p-m`, `gap-s`, `flex`, `text-secondary`, …) stop resolving
-silently — port them into your own theme CSS first. A project that uses none, as
-all three projects this skill has been run against did, will notice nothing.
+silently — port them into your own theme CSS first. A project that uses none
+will notice nothing.
 
-**Do not set `"parent": "jmix-aura"` in theme.json.** The `@StyleSheet`
-declarations above are the documented way to load Aura; the parent chain is not.
-On top of that, in `jmix-flowui-themes` 3.0.1 and 3.0.2 the packaged `jmix-aura`
-folder contains no `styles.css` (only `jmix-aura.css`), so the parent chain also
-fails outright — check this for your own version, since a later release may add
-that file:
-
-```
-java.nio.file.NoSuchFileException: .../frontend/generated/jar-resources/themes/jmix-aura/styles.css
-Caused by: RuntimeException: Unable to read theme file from styles.css
-```
-
-Adding your own `styles.css` shim for `jmix-aura` silences that crash but does
-not switch the theme, so it is not a substitute for Step 2.
+**Do not set `"parent": "jmix-aura"` in theme.json.** `JmixAura.STYLESHEET` is
+the entry point; the parent chain is the deprecated Lumo-era mechanism and is
+not a substitute for it.
 
 ## Step 3 — delete the old theme wiring
 
@@ -271,36 +244,8 @@ Diff your `main-view.xml` against the fresh project's. The rules above are for
 the drawer-based MainView; a project using the horizontal menu keys off the
 `jmix-main-view-top-menu-*` classes in `main-view-top-menu.css` instead.
 
-Other 3.x changes there are optional but visible: a header `<userMenu>`
-replacing the footer `<userIndicator>` (its renderer installs live in
-`MainView.java` and the `user-menu-*` classes are already styled), and
-`<listMenu themeNames="toggle-reverse"/>`, which moves the menu toggles to the
-trailing edge — purely cosmetic, and adopt it only if you want that look.
-
-**Adopting `<userMenu>` in a non-English app: do not copy the reference's message
-keys.** The generated main view refers to two *framework* keys,
-`actions.logout.text` and `userMenu.substituted`, and `jmix-translations-<lang>`
-does not necessarily carry them — `jmix-translations-es` 3.0.1 ships
-`actions.logout.description` but no `actions.logout.text`, so the menu item
-silently renders "Log out" in a Spanish app.
-
-Do NOT patch that with a narrow project override at
-`src/main/resources/io/jmix/flowui/messages_<lang>.properties`. `JmixMessageSource`
-resolves each basename through `Resources.getResource(...)`, which returns a
-SINGLE resource — so such a file *replaces* the jar's bundle rather than merging
-into it, and every key you did not copy falls through to the English default
-bundle. (Mechanism read from the 3.0.2 sources jar, not confirmed by experiment.)
-
-Give the action a project-owned key in the view's own message group instead:
-
-```xml
-<action id="logout" text="msg://logout.text" type="logout"/>
-```
-
-and add `<view.package>/logout.text` to every locale file — see
-`jmix-add-i18n-keys`. Omit the reference's substitute-user item unless the app
-actually wants user substitution; it is a second consumer of an untranslated
-framework key, and it grants a real capability rather than a cosmetic one.
+`<listMenu themeNames="toggle-reverse"/>` moves the menu toggles to the trailing
+edge — purely cosmetic, adopt it only if you want that look.
 
 ## Verify — in a browser, on computed values
 
@@ -332,16 +277,12 @@ can move between patch releases. If tokens resolve but components still look
 Lumo, you skipped Step 4.
 
 **Never test `adoptedStyleSheets` for `_lumo-vaadin`.** That substring is present
-on a correctly migrated Aura app on Vaadin 25.1.x, so it reports failure on a
-success. What is actually there is a single rule on `:root::before, :host::before`
-whose `transition` lists `--_lumo-vaadin-*-inject` properties: Vaadin's per-page
-component-detection sentinel, which kept the legacy prefix. Two things identify
-it as harmless — its token list *changes as you navigate* (`login-form-wrapper`,
-`text-field`, `password-field` on the login view; `app-layout`, `drawer-toggle`,
-`menu-bar` on MainView), and the sheet defines no `--lumo-*` custom properties at
-all. Do not try to recognise it by length: the rule grows and shrinks with that
-token list. Observed on migrated projects at 25.1.11 and 25.1.14; not yet
-compared against a freshly generated Aura one.
+on a correctly migrated Aura app, so it reports failure on a success. What is
+actually there is a single rule on `:root::before, :host::before` whose
+`transition` lists `--_lumo-vaadin-*-inject` properties: Vaadin's per-page
+component-detection sentinel, which kept the legacy prefix. It defines no
+`--lumo-*` custom properties, and its token list changes as you navigate — so do
+not try to recognise it by length either.
 
 ### The login view is not enough
 
@@ -367,8 +308,7 @@ per page.
 
 ## Forbidden
 
-- `"parent": "jmix-aura"` in `theme.json`, or a hand-written `styles.css` shim
-  for the packaged `jmix-aura` folder.
+- `"parent": "jmix-aura"` in `theme.json` instead of `JmixAura.STYLESHEET`.
 - Keeping `@Theme` together with the Aura `@StyleSheet` declarations.
 - Keeping `@StyleSheet(Lumo.UTILITY_STYLESHEET)` after the switch, or looking
   for an `Aura.UTILITY_STYLESHEET` to replace it with — there is none.
@@ -381,8 +321,5 @@ per page.
   renders a page.
 - Treating `_lumo-vaadin` in `adoptedStyleSheets` as proof the migration failed;
   it is present under Aura too.
-- Overriding a framework bundle at
-  `src/main/resources/io/jmix/<module>/messages_<lang>.properties` to supply one
-  missing translation — it shadows the whole bundle.
 - Calling the migration verified from the login view alone — the MainView header
   rules are untested until someone logs in.
