@@ -99,20 +99,9 @@ annotation** and its import — with the folder gone it has nothing to resolve,
 and it is deprecated in Vaadin 25 anyway.
 
 **Delete `@StyleSheet(Lumo.UTILITY_STYLESHEET)` and the `Lumo` import too** —
-the upgrade added them, and they load a Lumo stylesheet next to Aura. Aura has
-no counterpart: the `Aura` class exposes only
-`STYLESHEET`, and `aura.css` defines no utility classes at all, just
-`.aura-accent-*`, `.aura-surface*` and the `.v-error` / `.v-success` state
-classes. Check whether you actually use any before dropping it:
-
-```bash
-grep -rn "LumoUtility" src/main/java --include='*.java'
-grep -rhoE 'classNames?="[^"]*"' src/main/resources --include='*.xml' | sort -u
-```
-
-Lumo utility names (`p-m`, `gap-s`, `flex`, `text-secondary`, …) stop resolving
-silently — port them into your own theme CSS first. A project that uses none
-will notice nothing.
+the upgrade added them, and they load a Lumo stylesheet next to Aura. There is
+no Aura counterpart to swap in. **Do Step 6 first if the project uses any Lumo
+utility class**, or the layout silently collapses the moment this line goes.
 
 **Do not set `"parent": "jmix-aura"` in theme.json.** `JmixAura.STYLESHEET` is
 the entry point; the parent chain is the deprecated Lumo-era mechanism and is
@@ -233,7 +222,90 @@ lower the two defaults to taste and check the result in a browser. Note that
 unlike Lumo you cannot shrink spacing independently of control sizing.
 Enumerate before guessing any name — see `jmix-style-ui`.
 
-## Step 6 — audit theme variants and view class names
+## Step 6 — port the Lumo utility classes
+
+**Aura has no utility-class layer, and there is nothing to migrate them *to*.**
+Lumo shipped a whole stylesheet of `p-m`, `gap-s`, `flex`, `text-secondary`,
+`bg-contrast-5` …; `aura.css` defines only `.aura-accent-*`, `.aura-surface*`
+and the `.v-error` / `.v-success` state classes. There is no
+`Aura.UTILITY_STYLESHEET` and no renamed equivalent. Every utility class in the
+project stops resolving the moment Step 2 drops the stylesheet, and **nothing
+reports it** — the class attribute stays in the DOM and matches no rule, so
+padding, gaps and flex direction simply vanish.
+
+So this is not a rename. Each utility class in use becomes either a project CSS
+rule or an equivalent declaration on the component.
+
+### Find every use — the `LumoUtility` symbol is not enough
+
+The constants resolve to plain strings, so the class name is just as likely to
+be written as a literal — `addClassName("p-m")`, a `classNames` attribute, or a
+name built by concatenation. Search for the rendered names, not only the symbol:
+
+```bash
+# 1. the symbol
+grep -rn "LumoUtility" src/main/java --include='*.java'
+
+# 2. the rendered names, wherever they are written as strings
+UTIL='\b(p|m)[xytrbl]?-(auto|none|xs|s|m|l|xl|[0-9]+)\b|\bgap-[xy]?-?(xs|s|m|l|xl)\b'
+UTIL="$UTIL"'|\b(flex|inline-flex|grid|block|inline-block|hidden)\b'
+UTIL="$UTIL"'|\bflex-(row|col)(-reverse)?\b|\bitems-(start|center|end|baseline|stretch)\b'
+UTIL="$UTIL"'|\bjustify-(start|center|end|between|around|evenly)\b'
+UTIL="$UTIL"'|\btext-(xxs|xs|s|m|l|xl|xxl|xxxl|left|center|right)\b'
+UTIL="$UTIL"'|\btext-(header|body|secondary|tertiary|disabled|primary|error|success)\b'
+UTIL="$UTIL"'|\bfont-(light|normal|medium|semibold|bold)\b|\bbg-[a-z0-9-]+\b'
+UTIL="$UTIL"'|\brounded-(s|m|l|full)\b|\bshadow-(xs|s|m|l|xl)\b|\b[wh]-(full|auto)\b'
+
+grep -rnE "$UTIL" src/main/java src/main/resources \
+     --include='*.java' --include='*.xml'
+```
+
+The second search is deliberately broad and will over-match — `flex`, `grid`
+and `hidden` are ordinary words. Read the hits; do not act on the count. What
+you want out of it is **the set of distinct utility names the project actually
+uses**, which is usually a dozen or fewer.
+
+### Replace them
+
+Write the survivors into your own theme CSS, against Aura tokens. Most map to
+one declaration:
+
+| Lumo utility | What to write |
+|---|---|
+| `p-*`, `m-*`, `px-*`, `pt-*`, … | `padding` / `margin` from `--vaadin-padding-*` |
+| `gap-*` | `gap: var(--vaadin-gap-*)` |
+| `text-xs…text-xxxl` | `font-size: var(--aura-font-size-*)` (5 steps only — see Step 5) |
+| `font-bold`, `font-medium` | `font-weight: var(--aura-font-weight-*)` |
+| `text-secondary`, `text-body` | `color: var(--vaadin-text-color-secondary)` / `--vaadin-text-color` |
+| `text-error`, `text-success` | `color: var(--aura-red-text)` / `var(--aura-green-text)` |
+| `bg-contrast-*`, `bg-base` | `background: var(--vaadin-background-container*)` — no alpha scale, see Step 5 |
+| `rounded-*` | `border-radius: var(--aura-base-radius)` |
+| `shadow-*` | `box-shadow: var(--aura-shadow-xs/-s/-m)` |
+| `flex`, `flex-col`, `items-center`, `justify-between`, `w-full`, `hidden`, … | plain CSS — no token involved, write the property directly |
+
+The layout family is the bulk of real usage and needs no tokens at all, so the
+cheapest port for a project with many of them is a small project-owned utility
+sheet that redefines just the names in use:
+
+```css
+/* src/main/resources/META-INF/resources/themes/<app>-aura/<app>.css */
+.flex         { display: flex; }
+.flex-col     { flex-direction: column; }
+.items-center { align-items: center; }
+.gap-m        { gap: var(--vaadin-gap-m); }
+.p-m          { padding: var(--vaadin-padding-m); }
+```
+
+That keeps the existing `classNames` and Java call sites untouched. Do it only
+for names the project uses — re-creating Lumo's full utility sheet re-creates
+the problem the migration is supposed to end. Prefer Flow's own layout API
+(`setFlexDirection`, `setAlignItems`, `setPadding`) where you are editing the
+component anyway.
+
+Verify in the browser, not in the build — a missing utility class is exactly
+the silent failure this skill is about. See **Verify**.
+
+## Step 7 — audit theme variants and view class names
 
 **Variants are theme-specific and compile either way.** Jmix 3.0 removed
 `always-float-label`, `contained`, `outlined`; support now depends on the active
@@ -307,7 +379,7 @@ not try to recognise it by length either.
 ### The login view is not enough
 
 Everything past login needs an authenticated session, and an agent must not type
-passwords into the form. That matters here because **the Step 6
+passwords into the form. That matters here because **the Step 7
 `jmix-main-view-app-layout` class — the most failure-prone edit in this skill,
 and a silent one — can only be verified on MainView.**
 
@@ -332,6 +404,9 @@ per page.
 - Keeping `@Theme` together with the Aura `@StyleSheet` declarations.
 - Keeping `@StyleSheet(Lumo.UTILITY_STYLESHEET)` after the switch, or looking
   for an `Aura.UTILITY_STYLESHEET` to replace it with — there is none.
+- Dropping the Lumo utility stylesheet without porting the classes the project
+  uses (Step 6), or clearing the project by grepping for `LumoUtility` alone —
+  the names are plain strings and are often written as literals.
 - Leaving `com.vaadin.experimental.themeComponentStyles=true` enabled.
 - Starting the app without `./gradlew clean vaadinClean` and concluding the
   theme "did not change anything".
