@@ -38,8 +38,8 @@ Confirm where you actually are before changing anything:
 
 ```bash
 grep -rn "@Theme\|@StyleSheet" src/main/java --include='*.java'
-# The Lumo theme folder is at src/main/frontend/themes/<app>/ in newer 2.x
-# projects and at frontend/themes/<app>/ in older ones — locate it, don't assume:
+# The Lumo theme folder belongs at src/main/frontend/themes/<app>/. A project
+# still on the deprecated root-level frontend/themes/ will show up here too:
 find . -name theme.json -not -path '*/generated/*' -not -path '*/node_modules/*' \
        -not -path '*/build/*' -print -exec cat {} +
 cat src/main/resources/vaadin-featureflags.properties 2>/dev/null
@@ -75,8 +75,8 @@ Copy the folder, rename `<source-app>.css` to `<app>.css`, and fix that one
 sibling; keeping it makes switching back a one-line change.
 
 **Note the location.** Aura themes live under
-`src/main/resources/META-INF/resources/themes/`, not under the `frontend/themes/`
-tree the Lumo theme used, wherever that sat.
+`src/main/resources/META-INF/resources/themes/`, not under the
+`src/main/frontend/themes/` tree the Lumo theme used.
 
 ## Step 2 — load Aura from the app shell, not from theme.json
 
@@ -100,7 +100,7 @@ and it is deprecated in Vaadin 25 anyway.
 
 **Delete `@StyleSheet(Lumo.UTILITY_STYLESHEET)` and the `Lumo` import too** —
 the upgrade added them, and they load a Lumo stylesheet next to Aura. Aura has
-no counterpart: in `vaadin-aura-theme` 25.1.x the `Aura` class exposes only
+no counterpart: the `Aura` class exposes only
 `STYLESHEET`, and `aura.css` defines no utility classes at all, just
 `.aura-accent-*`, `.aura-surface*` and the `.v-error` / `.v-success` state
 classes. Check whether you actually use any before dropping it:
@@ -121,7 +121,7 @@ not a substitute for it.
 ## Step 3 — delete the old theme wiring
 
 ```bash
-git rm -r <theme folder from Step 0>   # e.g. src/main/frontend/themes or frontend/themes
+git rm -r <theme folder from Step 0>   # normally src/main/frontend/themes/<app>
 git rm src/main/resources/vaadin-featureflags.properties
 ```
 
@@ -145,27 +145,39 @@ If the file holds other flags, drop only the `themeComponentStyles` line.
 ./gradlew clean vaadinClean
 ```
 
-This is the documented post-migration step. Without it the prebuilt
-`src/main/bundles/dev.bundle` from the Lumo era is reused and **keeps serving
-Lumo component styles**, while Vaadin logs the reassuring:
+This is the documented post-migration step. Run it whatever mode you are in —
+the generated frontend is stale in all of them, and `vaadinClean` is the only
+thing that clears it.
+
+**In the default dev-bundle mode** the stale artefact is the prebuilt
+`src/main/bundles/dev.bundle` from the Lumo era. Without the clean it is reused
+and **keeps serving Lumo component styles**, while Vaadin logs the reassuring:
 
 ```
 BundleValidationUtil : A development mode bundle build is not needed
 ```
 
+You want the next start to log `A development mode bundle build is needed`
+instead. If it logs `not needed`, something stale survived.
+
+**With `vaadin.frontend.hotdeploy=true`** there is no bundle and that log line
+never appears, so it cannot be your check — Vite serves the generated frontend
+directly. **In a production build** the bundle is rebuilt by the build itself.
+In both cases the stale `src/main/frontend/generated` is still the thing to
+clear, and the browser checks under **Verify** are the only real signal.
+
 `vaadinClean` removes `src/main/bundles`, `node_modules`, `.vaadin`, and usually
-the generated frontend; the next start rebuilds (npm install + bundle, a minute or
-two, logged as `Development frontend bundle built`). Deleting
+the generated frontend; the next start rebuilds (npm install + bundle, a minute
+or two, logged as `Development frontend bundle built`). Deleting
 `src/main/frontend/generated` alone is NOT enough.
 
-It does not always get everything: on a root-level `frontend/` layout it left
-`frontend/generated` in place. Verify, and delete by hand whatever survives —
-these paths are all gitignored, so this is safe:
+It does not always get everything. Verify, and delete by hand whatever survives
+— these paths are all gitignored, so this is safe:
 
 ```bash
 ./gradlew clean vaadinClean
 # Run this BEFORE starting the app — see below.
-for d in src/main/bundles node_modules .vaadin frontend/generated src/main/frontend/generated; do
+for d in src/main/bundles node_modules .vaadin src/main/frontend/generated; do
   [ -e "$d" ] && echo "STILL PRESENT: $d  (delete it)"
 done
 ```
@@ -173,9 +185,6 @@ done
 Order matters: a successful start legitimately recreates `src/main/bundles` (and
 `node_modules`), so the same loop run afterwards reports them and means nothing.
 Check between `vaadinClean` and the first start, or you will chase a phantom.
-
-You want the next start to log `A development mode bundle build is needed`. If it
-logs `not needed`, something stale survived.
 
 ## Step 5 — port your own CSS to Aura tokens
 
@@ -189,13 +198,25 @@ families are not name-for-name equivalents — translate by meaning:
 | `--lumo-body-text-color` | `--vaadin-text-color` |
 | `--lumo-secondary-text-color` | `--vaadin-text-color-secondary` |
 | `--lumo-header-text-color` | `--vaadin-text-color` (approximate: Aura has no separate header-text token) |
-| `--lumo-contrast-10pct` (borders) | `--vaadin-border-color-secondary` |
-| `--lumo-shade-5pct` (subtle fill) | `--vaadin-background-container` |
+| `--lumo-primary-color` / `-text-color` / `-contrast-color` | `--aura-accent-color` / `--aura-accent-text-color` / `--aura-accent-contrast-color` |
+| `--lumo-success-*` | `--aura-green`, `--aura-green-text` |
+| `--lumo-error-*` | `--aura-red`, `--aura-red-text` |
+| `--lumo-warning-*` | `--aura-yellow` / `--aura-orange` (+ `-text`) |
+| `--lumo-contrast-*` (the whole alpha scale) | **no scale.** Pick by role: border → `--vaadin-border-color` / `-secondary`; fill → `--vaadin-background-container` / `-strong`; text → `--vaadin-text-color-secondary` / `-disabled` |
+| `--lumo-shade-*` / `--lumo-tint-*` | **no scale.** Same rule — pick the `--vaadin-*` token for the role, or `--aura-surface-color` for a raised panel |
 | `--lumo-size-*` (control height) | **no equivalent** |
 
-Aura has no control-height scale and no contrast scale. Where you relied on
-`--lumo-size-*`, define your own token in the project stylesheet rather than
-inventing an `--aura-` name.
+The `-primary-`, `-success-`, `-error-` and `-warning-` families each carry a
+`-color` / `-text-color` / `-contrast-color` trio in Lumo; Aura's counterparts
+are a fill plus a `-text` variant, with no contrast token, so a "text on a
+coloured fill" rule has to be written by hand.
+
+Aura has no control-height scale and no contrast/shade/tint scales. Where you
+relied on `--lumo-size-*` or on a percentage step, define your own token in the
+project stylesheet rather than inventing an `--aura-` name.
+
+The tables above cover the translation only. For the authoritative list of what
+Aura actually defines — and the command to enumerate it — see `jmix-style-ui`.
 
 Global density comes from two root numbers rather than three independent
 scales, so a Lumo "compact preset" collapses to overriding these two knobs:
@@ -269,12 +290,11 @@ document.adoptedStyleSheets
 ```
 
 **The component test is the primary check** — tokens can resolve while components
-still render Lumo. Compare against the fresh Aura project: a text field's
-`[part="input-field"]` should have a real border width and Aura's radius
-(`1px` / `9px` on 25.1.x), not `0px` / Lumo's `4px`. Read the pair off your
-reference project rather than trusting those numbers — they are theme CSS and
-can move between patch releases. If tokens resolve but components still look
-Lumo, you skipped Step 4.
+still render Lumo. Compare against the reference Aura project: a text field's
+`[part="input-field"]` should have a real border width and Aura's radius, not
+`0px` and Lumo's smaller one. Read the pair off your reference project rather
+than hard-coding numbers — they are theme CSS and can move between releases. If
+tokens resolve but components still look Lumo, you skipped Step 4.
 
 **Never test `adoptedStyleSheets` for `_lumo-vaadin`.** That substring is present
 on a correctly migrated Aura app, so it reports failure on a success. What is
@@ -297,7 +317,7 @@ log in, and check the header:
 
 ```js
 const h = getComputedStyle(document.querySelector('.jmix-main-view-header'));
-[h.borderBottomWidth, h.borderStartStartRadius]   // ['1px','15px'], not ['0px','0px']
+[h.borderBottomWidth, h.borderStartStartRadius]   // real values, not ['0px','0px']
 document.querySelector('vaadin-app-layout').classList.contains('jmix-main-view-app-layout')
 ```
 
